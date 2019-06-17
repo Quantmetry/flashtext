@@ -1,6 +1,7 @@
 import os
 import string
 import io
+from collections import defaultdict
 
 
 class KeywordProcessor(object):
@@ -35,7 +36,7 @@ class KeywordProcessor(object):
         * Idea came from this `Stack Overflow Question <https://stackoverflow.com/questions/44178449/regex-replace-is-taking-time-for-millions-of-documents-how-to-make-it-faster>`_.
     """
 
-    def __init__(self, case_sensitive=False):
+    def __init__(self, case_sensitive=False, char_costs=defaultdict(lambda: 1), pos_costs=[1] * 20):
         """
         Args:
             case_sensitive (boolean): Keyword search should be case sensitive set or not.
@@ -52,6 +53,8 @@ class KeywordProcessor(object):
         self.keyword_trie_dict = dict()
         self.case_sensitive = case_sensitive
         self._terms_in_trie = 0
+        self.char_costs = char_costs
+        self.pos_costs = pos_costs
 
     def __len__(self):
         """Number of terms present in the keyword_trie_dict
@@ -615,6 +618,7 @@ class KeywordProcessor(object):
         idx = 0
         sentence_len = len(sentence)
         curr_cost = max_cost
+        pos = 0   # position in the keyword
         while idx < sentence_len:
             char = sentence[idx]
             # when we reach whitespace
@@ -720,6 +724,7 @@ class KeywordProcessor(object):
                 new_sentence.append(current_word)
                 current_word = ''
                 current_white_space = ''
+                pos_in_word = 0
             # if we are end of sentence and have a sequence discovered
             if idx + 1 >= sentence_len:
                 if self._keyword in current_dict:
@@ -753,7 +758,7 @@ class KeywordProcessor(object):
             next_word += char
         return next_word
 
-    def levensthein(self, word, max_cost=2, start_node=None):
+    def levensthein(self, word, max_cost=2, start_node=None, depth=0):
         """
         Retrieve the nodes where there is a fuzzy match,
         via levenshtein distance, and with respect to max_cost
@@ -783,18 +788,19 @@ class KeywordProcessor(object):
         rows = range(len(word) + 1)
 
         for char, node in start_node.items():
-            yield from self._levenshtein_rec(char, node, word, rows, max_cost, depth=1)
+            yield from self._levenshtein_rec(char, node, word, rows, max_cost, depth=depth)
 
 
     def _levenshtein_rec(self, char, node, word, rows, max_cost, depth=0):
         n_columns = len(word) + 1
-        new_rows = [rows[0] + 1]
+        pos_cost = self.pos_costs[depth]
+        new_rows = [(rows[0] + 1) * pos_cost]
 
         for col in range(1, n_columns):
-            insert_cost = new_rows[col - 1] + 1
-            delete_cost = rows[col] + 1
-            replace_cost = rows[col - 1] + int(word[col - 1] != char)
-            cost = min((insert_cost, delete_cost, replace_cost))
+            insert_cost = (new_rows[col - 1] + 1) * self.char_costs['insert_' + char]
+            delete_cost = (rows[col] + 1) * self.char_costs['delete_' + char]
+            replace_cost = (rows[col - 1] + int(word[col - 1] != char)) * self.char_costs['replace_' + char]
+            cost = min((insert_cost, delete_cost, replace_cost)) * pos_cost
             new_rows.append(cost)
 
         stop_crit = node.keys() & (self._white_space_chars | {self._keyword})
